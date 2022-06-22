@@ -1,5 +1,80 @@
 #include "stdafx.h"
 
+std::string Utf8ToAcp(const std::string& str)
+{
+	int nwLen = ::MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, NULL, 0);
+
+	wchar_t* pwBuf = new(std::nothrow) wchar_t[nwLen + 1];//一定要加1，不然会出现尾巴
+	if (pwBuf)
+	{
+		ZeroMemory(pwBuf, nwLen * 2 + 2);
+
+		::MultiByteToWideChar(CP_UTF8, 0, str.c_str(), str.length(), pwBuf, nwLen);
+
+		int nLen = ::WideCharToMultiByte(CP_ACP, 0, pwBuf, -1, NULL, NULL, NULL, NULL);
+
+		char* pBuf = new(std::nothrow) char[nLen + 1];
+
+		if (!pBuf)
+		{
+			delete[]pwBuf;
+			return std::string("");
+		}
+
+		ZeroMemory(pBuf, nLen + 1);
+
+		::WideCharToMultiByte(CP_ACP, 0, pwBuf, nwLen, pBuf, nLen, NULL, NULL);
+
+		std::string retStr(pBuf);
+
+		delete[]pwBuf;
+		delete[]pBuf;
+
+		pwBuf = NULL;
+		pBuf = NULL;
+		return retStr;
+	}
+
+	return std::string("");
+}
+std::string Acp8ToUtf(const std::string& str)
+{
+	int nwLen = ::MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, NULL, 0);
+
+	wchar_t* pwBuf = new(std::nothrow) wchar_t[nwLen + 1];//一定要加1，不然会出现尾巴
+	if (pwBuf)
+	{
+		ZeroMemory(pwBuf, nwLen * 2 + 2);
+
+		::MultiByteToWideChar(CP_ACP, 0, str.c_str(), str.length(), pwBuf, nwLen);
+
+		int nLen = ::WideCharToMultiByte(CP_UTF8, 0, pwBuf, -1, NULL, NULL, NULL, NULL);
+
+		char* pBuf = new(std::nothrow) char[nLen + 1];
+
+		if (!pBuf)
+		{
+			delete[]pwBuf;
+			return std::string("");
+		}
+
+		ZeroMemory(pBuf, nLen + 1);
+
+		::WideCharToMultiByte(CP_UTF8, 0, pwBuf, nwLen, pBuf, nLen, NULL, NULL);
+
+		std::string retStr(pBuf);
+
+		delete[]pwBuf;
+		delete[]pBuf;
+
+		pwBuf = NULL;
+		pBuf = NULL;
+		return retStr;
+	}
+
+	return std::string("");
+}
+
 int MatchNodeData(IDASigNode *Node, BYTE *Input, size_t Length)
 {
 	//
@@ -279,7 +354,9 @@ bool ApplyDiffSymbols(char *Path, duint UNUSED_ModuleBase)
 
 bool ApplyMapSymbols(char *Path, duint ModuleBase)
 {
-	_plugin_logprintf("Opening map file '%s'\n", Path);
+	//_plugin_logprintf("Opening map file '%s'\n", Path);
+	std::string& acpPath = Acp8ToUtf(Path);
+	_plugin_logprintf("Opening map file '%s'\n", acpPath.c_str());
 
 	// Parse the map
 	MapFile map;
@@ -299,16 +376,21 @@ bool ApplyMapSymbols(char *Path, duint ModuleBase)
         char modulePath[MAX_MODULE_SIZE];
 
         if (DbgFunctions()->ModPathFromAddr(ModuleBase, modulePath, ARRAYSIZE(modulePath)))
-        {
-            size_t sectionCount = GetPE32Data(modulePath, 0, UE_SECTIONNUMBER);
+		{
+			//size_t sectionCount = GetPE32Data(modulePath, 0, UE_SECTIONNUMBER);
+			std::string& acpModulePath = Utf8ToAcp(modulePath);
+            size_t sectionCount = GetPE32Data(acpModulePath.c_str(), 0, UE_SECTIONNUMBER);
 
             for (size_t i = 0; i < sectionCount; i++)
             {
                 MapFileSegment segdef;
                 memset(&segdef, 0, sizeof(segdef));
-                strcpy_s(segdef.Name, (const char*)GetPE32Data(modulePath, i, UE_SECTIONNAME));
-                segdef.Start = GetPE32Data(modulePath, i, UE_SECTIONVIRTUALOFFSET);
-                segdef.Length = GetPE32Data(modulePath, i, UE_SECTIONVIRTUALSIZE);
+    //            strcpy_s(segdef.Name, (const char*)GetPE32Data(modulePath, i, UE_SECTIONNAME));
+    //            segdef.Start = GetPE32Data(modulePath, i, UE_SECTIONVIRTUALOFFSET);
+				//segdef.Length = GetPE32Data(modulePath, i, UE_SECTIONVIRTUALSIZE);
+				strcpy_s(segdef.Name, (const char*)GetPE32Data(acpModulePath.c_str(), i, UE_SECTIONNAME));
+				segdef.Start = GetPE32Data(acpModulePath.c_str(), i, UE_SECTIONVIRTUALOFFSET);
+				segdef.Length = GetPE32Data(acpModulePath.c_str(), i, UE_SECTIONVIRTUALSIZE);
                 segdef.Id = i + 1;
 
                 segments.push_back(segdef);
@@ -323,10 +405,18 @@ bool ApplyMapSymbols(char *Path, duint ModuleBase)
         _plugin_logprintf("  %d: Start=0x%08llX, Length=0x%08llX, %s\n", seg.Id, seg.Start, seg.Length, seg.Name);
 
 	// Apply each symbol manually
-    for (auto& sym : map.GetSymbols())
-        DbgSetAutoLabelAt((duint)(ModuleBase + map.GetSegmentStart(sym.Id) + sym.Offset), sym.Name);
+	bool flag;
+	duint failedSize(0);
+	for (auto& sym : map.GetSymbols()) 
+	{
+		flag = DbgSetAutoLabelAt((duint)(ModuleBase + map.GetSegmentStart(sym.Id) + sym.Offset), sym.Name);
+		if (!flag)
+			failedSize++;
+	}
+
 
 	_plugin_logprintf("Applied %d symbol(s)\n", map.GetSymbols().size());
+	_plugin_logprintf("Applied failed %d symbol(s)\n", failedSize);
 	return true;
 }
 
